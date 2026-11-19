@@ -686,7 +686,7 @@
   const say = (t) => { statusEl.textContent = t; };
 
   let THREE, renderer, scene, cam, mixer, idleAction, clock;
-  let root, faceNormal, faceHappy, blush;
+  let root, faceNormal, faceHappy, blush, tailBone, modelScene, wagPhase = 0;
   let landmarker = null, stream = null, running = false, rafId = 0;
   let libsPromise = null;
 
@@ -744,6 +744,8 @@
         faceNormal = g.scene.getObjectByName("Face_Normal");
         faceHappy  = g.scene.getObjectByName("Face_Happy");
         blush      = g.scene.getObjectByName("Blush");
+        tailBone   = g.scene.getObjectByName("tail");    // 꼬리 뼈 (오리)
+        modelScene = g.scene;
         mixer = new THREE.AnimationMixer(g.scene);
         const clip = THREE.AnimationClip.findByName(g.animations, "Idle") || g.animations[0];
         if (clip) { idleAction = mixer.clipAction(clip); idleAction.play(); }
@@ -908,6 +910,14 @@
       root.rotation.z = lean + Math.sin(rubPhase) * 0.075 * kRub;
       root.rotation.y = Math.sin(rubPhase * 0.5) * 0.10 * kRub - side * 0.12 * kRub;
       root.position.y = Math.abs(Math.sin(rubPhase)) * 0.008 * kRub;
+    }
+    // 꼬리 살랑살랑 (눈웃음과 함께 시작)
+    wagPhase += dt * 16;
+    if (tailBone && kEyes > 0.001) {
+      modelScene.updateMatrixWorld(true);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(modelScene.getWorldQuaternion(new THREE.Quaternion()));
+      up.applyQuaternion(tailBone.getWorldQuaternion(new THREE.Quaternion()).invert()).normalize();
+      tailBone.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(up, Math.sin(wagPhase) * 0.55 * kEyes));
     }
     // 기뻐할 땐 통통 뛰기를 줄여요
     if (idleAction) idleAction.setEffectiveWeight(1 - 0.85 * kRub);
