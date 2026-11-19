@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>보리 AR</title>
+<meta name="description" content="휴대폰 카메라로 바닥에 캐릭터를 올려 보는 웹 AR 프로토타입">
+<style>
+  /* ===== 여기만 바꿔도 색이 바뀌어요 ===== */
+  :root {
+    --bg: #f4f1ea;
+    --ink: #1f2430;
+    --sub: #6b6f78;
+    --accent: #e8743b;
+    --accent-ink: #ffffff;
+    --card: rgba(255, 255, 255, 0.92);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15171c; --ink: #eef0f3; --sub: #a3a8b2; --card: rgba(32, 35, 42, 0.92); }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  body { display: flex; flex-direction: column; min-height: 100dvh; }
+
+  header { padding: max(16px, env(safe-area-inset-top)) 16px 4px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+  header p { margin: 4px 0 0; font-size: 14px; color: var(--sub); line-height: 1.45; }
+
+  model-viewer { flex: 1; width: 100%; min-height: 60vh; --poster-color: transparent; background: transparent; }
+
+  /* 로딩 바 */
+  .progress { position: absolute; left: 16px; right: 16px; top: 50%; height: 6px; border-radius: 3px;
+    background: rgba(127,127,127,.2); overflow: hidden; transition: opacity .3s; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .progress.done { opacity: 0; }
+
+  /* AR 버튼 */
+  .ar-btn { position: absolute; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    border: 0; border-radius: 999px; padding: 16px 28px; font-size: 18px; font-weight: 700;
+    background: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 20px rgba(0,0,0,.18);
+    display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; cursor: pointer; }
+  .ar-btn:active { transform: translateX(-50%) scale(.97); }
+  .ar-btn svg { width: 22px; height: 22px; }
+
+  /* 안내 카드 */
+  .notice { margin: 0 16px max(16px, env(safe-area-inset-bottom)); padding: 14px 16px; border-radius: 14px;
+    background: var(--card); font-size: 14px; line-height: 1.55; display: none; }
+  .notice.show { display: block; }
+  .notice b { color: var(--accent); }
+  .notice a.btn { display: inline-block; margin-top: 10px; padding: 10px 16px; border-radius: 10px;
+    background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 700; }
+
+  .tip { text-align: center; font-size: 13px; color: var(--sub); padding: 0 16px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>보리를 내 방에 불러오기</h1>
+  <p>손가락으로 돌려 보고, 아래 버튼을 누르면 카메라로 바닥에 놓을 수 있어요.</p>
+</header>
+
+<!-- ===== 모델 파일을 바꾸려면 src 를 바꾸세요 (예: src="knight.glb") ===== -->
+<model-viewer id="viewer"
+  src="character.glb"
+  alt="임시 캐릭터 보리"
+  ar
+  ar-modes="webxr scene-viewer quick-look"
+  ar-placement="floor"
+  ar-scale="auto"
+  camera-controls
+  touch-action="pan-y"
+  autoplay
+  shadow-intensity="1"
+  shadow-softness="0.8"
+  exposure="1.05"
+  environment-image="neutral"
+  camera-target="0.35m 0.18m 0m"
+  camera-orbit="25deg 68deg 2.3m"
+  min-camera-orbit="auto auto 0.8m"
+  max-camera-orbit="auto auto 4m"
+  interaction-prompt="auto">
+  <div class="progress" slot="progress-bar" id="progress"><div></div></div>
+  <button class="ar-btn" slot="ar-button" id="arBtn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></svg>
+    AR로 내 공간에 놓기
+  </button>
+</model-viewer>
+
+<p class="tip" id="tip">AR 화면에서: 휴대폰을 천천히 움직여 바닥을 비추고 → 화면을 탭해 놓기 · 두 손가락으로 크기 조절</p>
+<div class="notice" id="notice"></div>
+
+<script>
+  // ---------- model-viewer 불러오기 (구글 CDN → 실패하면 다른 CDN) ----------
+  (function loadMV() {
+    const urls = [
+      "https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js",
+      "https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js",
+      "https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"
+    ];
+    let i = 0;
+    (function next() {
+      if (i >= urls.length) { showNotice("<b>3D 뷰어를 불러오지 못했어요.</b><br>인터넷 연결을 확인하고 새로고침해 주세요."); return; }
+      const s = document.createElement("script");
+      s.type = "module"; s.src = urls[i++]; s.onerror = next;
+      document.head.appendChild(s);
+    })();
+  })();
+
+  const viewer = document.getElementById("viewer");
+  const notice = document.getElementById("notice");
+  const tip = document.getElementById("tip");
+  function showNotice(html) { notice.innerHTML = html; notice.classList.add("show"); }
+
+  // ---------- 로딩 바 ----------
+  viewer.addEventListener("progress", (e) => {
+    const p = e.detail.totalProgress;
+    const bar = document.getElementById("progress");
+    bar.firstElementChild.style.width = (p * 100) + "%";
+    if (p >= 1) bar.classList.add("done");
+  });
+  viewer.addEventListener("error", () => showNotice("<b>모델 파일을 불러오지 못했어요.</b><br>파일 이름(src)이 맞는지 확인해 주세요."));
+
+  // ---------- 카카오톡·인스타 등 앱 안 브라우저 대응 ----------
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+  const inApp = /KAKAOTALK|Instagram|FBAN|FBAV|NAVER\(inapp|Line\/|everytimeApp|DaumApps/i.test(ua);
+  if (inApp) {
+    if (isAndroid && /KAKAOTALK/i.test(ua)) {
+      location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(location.href);   // 크롬으로 자동 이동
+    }
+    const target = isIOS ? "Safari" : "Chrome";
+    showNotice(`<b>앱 안 브라우저에서는 AR이 안 열릴 수 있어요.</b><br>
+      오른쪽 위(또는 아래) <b>⋯ 메뉴 → '${target}로 열기'</b>를 눌러 주세요.` +
+      (isAndroid ? `<br><a class="btn" href="intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;end">Chrome으로 열기</a>` : ""));
+  }
+
+  // ---------- AR 지원 여부 안내 ----------
+  viewer.addEventListener("load", () => {
+    if (!viewer.canActivateAR) {
+      tip.style.display = "none";
+      if (!inApp) {
+        showNotice(isIOS || isAndroid
+          ? "<b>이 브라우저에서는 AR을 쓸 수 없어요.</b><br>아이폰은 <b>Safari</b>, 안드로이드는 <b>Chrome</b>으로 열어 주세요. (3D로 돌려 보기는 지금도 가능해요)"
+          : "<b>컴퓨터에서는 3D 미리보기만 돼요.</b><br>AR은 <b>휴대폰</b>으로 이 링크를 열어 주세요.");
+      }
+    }
+  });
+  viewer.addEventListener("ar-status", (e) => {
+    if (e.detail.status === "failed") {
+      showNotice("<b>AR을 시작하지 못했어요.</b><br>안드로이드는 'Google Play 서비스(AR)' 앱이 필요할 수 있어요. 밝은 곳에서 바닥 무늬가 보이게 다시 시도해 주세요.");
+    }
+  });
+</script>
+</body>
+</html>
